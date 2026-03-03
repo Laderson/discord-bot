@@ -60,7 +60,7 @@ class MyBot(commands.Bot):
                 guild.id, guild.name
             )
 
-bot = MyBot(command_prefix="!", intents=intents)
+bot = MyBot(command_prefix="?", intents=intents)
 
 @bot.event
 async def on_ready():
