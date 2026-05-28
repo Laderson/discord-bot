@@ -3,7 +3,7 @@ from discord.ext import commands
 import os
 import asyncio
 from dotenv import load_dotenv
-
+from utils.scheduler import start_story_scheduler
 from database.connection import db
 from database.models import create_tables
 
@@ -30,7 +30,8 @@ class MyBot(commands.Bot):
         print("✅ Base de datos lista")
 
         await self.load_all_cogs()
-
+        start_story_scheduler(self)
+        print("📖 Scheduler iniciado")
         GUILD_ID = 1415990627195289612  # coloca tu ID real aquí
 
         guild = discord.Object(id=GUILD_ID)
@@ -43,10 +44,17 @@ class MyBot(commands.Bot):
         print("✅ Slash commands sincronizados")
 
     async def load_all_cogs(self):
+        # Cogs raíz
         for file in os.listdir("./cogs"):
             if file.endswith(".py"):
                 await self.load_extension(f"cogs.{file[:-3]}")
-                print(f"📦 Cog cargado: {file}")
+                print(f"📦 Cog cargado: cogs.{file[:-3]}")
+
+        # Cogs dentro de cogs/dinamicas
+        for file in os.listdir("./cogs/dinamicas"):
+            if file.endswith(".py"):
+                await self.load_extension(f"cogs.dinamicas.{file[:-3]}")
+                print(f"📦 Cog cargado: cogs.dinamicas.{file[:-3]}")
 
     # Evento de unión a un servidor
     async def on_guild_join(self, guild):

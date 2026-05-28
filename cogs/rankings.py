@@ -1,28 +1,131 @@
 # cogs/ranking.py
+from enum import member
+
 import discord
+from discord.ext import commands, tasks
 from datetime import datetime
-from discord.ext import commands
 from discord import app_commands
 from services.ranking_service import (
     get_top_weekly,
     get_top_monthly,
     get_total_users,
-    get_top_coins
+    get_top_coins,
+    get_user_points,
+    remove_points
 )
 
 RANKING_CHANNEL_ID = 1461258291916308541
-RANKING_MESSAGE_ID = 1471664822109077567
+
+TOP_MESSAGE_ID = 1490487617991737354
+COINS_MESSAGE_ID = 1490487638610804876
 
 
 class Ranking(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.auto_update_ranking.start()
+
+    def cog_unload(self):
+        self.auto_update_ranking.cancel()
+
+    # ================== LOOP ==================
+    @tasks.loop(minutes=3)
+    async def auto_update_ranking(self):
+        print("⏰ Actualizando rankings...")
+
+        try:
+            await self.update_top_message()
+            print("✅ TOP actualizado")
+        except Exception as e:
+            print(f"❌ Error TOP: {e}")
+
+        try:
+            await self.update_coins_message()
+            print("✅ COINS actualizado")
+        except Exception as e:
+            print(f"❌ Error COINS: {e}")
+
+    @auto_update_ranking.before_loop
+    async def before_auto_update(self):
+        await self.bot.wait_until_ready()
+
+    @auto_update_ranking.error
+    async def auto_update_error(self, error):
+        print(f"🔥 ERROR LOOP: {error}")
 
     # ================== SLASH COMMAND TOP ==================
     @app_commands.command(name="top", description="Ver rankings del servidor")
     async def top(self, interaction: discord.Interaction):
+        embed = await self.build_top_embed(interaction.guild)
+        await interaction.response.send_message(embed=embed)
 
-        guild = interaction.guild
+    # ================== SLASH COMMAND COINS ==================
+    @app_commands.command(name="topcoins", description="Ver ranking de coins")
+    async def topcoins(self, interaction: discord.Interaction):
+        embed = await self.build_topcoins_embed(interaction.guild)
+        await interaction.response.send_message(embed=embed)
+
+    # ================== /REMOVEPOINTS (ADMIN) ==================
+    @app_commands.command(
+        name="removepoints",
+        description="Quitar puntos a un usuario del ranking"
+    )
+    @app_commands.checks.has_permissions(administrator=False)
+    @app_commands.describe(
+        member="Usuario al que se le quitarán puntos",
+        amount="Cantidad de puntos a quitar",
+        reason="Razón del retiro"
+    )
+    async def removepoints(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+        reason: str = "Sin especificar"
+    ):
+        from services.ranking_service import remove_points
+
+        if amount <= 0:
+            await interaction.response.send_message(
+                "❌ La cantidad debe ser mayor a 0.",
+                ephemeral=True
+            )
+            return
+
+        # Quitar los puntos usando el service
+        await remove_points(interaction.guild.id, member.id, amount)
+
+        # Obtener puntos actuales
+        current_points = await get_user_points(interaction.guild.id, member.id)
+
+        embed = discord.Embed(
+            title="➖ Retiro de Puntos",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(name="👤 Usuario", value=member.mention, inline=False)
+        embed.add_field(name="⭐ Puntos retirados", value=str(amount), inline=True)
+        embed.add_field(
+            name="📊 Total actual",
+            value=f"Semanal: `{current_points['weekly_points']}` | Mensual: `{current_points['monthly_points']}`",
+            inline=True
+        )
+        embed.add_field(name="📌 Razón", value=reason, inline=False)
+        embed.add_field(name="🏦 Retirado por", value=interaction.user.mention, inline=False)
+
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text="Sistema de ranking • Puntos")
+
+        await interaction.response.send_message(embed=embed)
+
+        # 🔄 Actualizar ranking
+        ranking_cog = self.bot.get_cog("Ranking")
+        if ranking_cog:
+            await ranking_cog.update_all_rankings()
+
+    # ================== EMBED TOP ==================
+    async def build_top_embed(self, guild: discord.Guild):
         guild_id = guild.id
 
         top_weekly = await get_top_weekly(guild_id)
@@ -32,7 +135,8 @@ class Ranking(commands.Cog):
         embed = discord.Embed(
             title="🏆 Rankings del Servidor",
             description=f"Servidor: **{guild.name}**",
-            color=discord.Color.gold()
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
         )
 
         def medal(i):
@@ -41,12 +145,14 @@ class Ranking(commands.Cog):
         def build(top_list, key):
             if not top_list:
                 return "No hay datos"
+
             lines = []
             for i, user in enumerate(top_list, start=1):
                 member = guild.get_member(user["user_id"])
                 name = member.display_name if member else f"Usuario ({user['user_id']})"
                 points = user[key]
-                lines.append(f"{medal(i)} {name} — {points} pts")
+                lines.append(f"{medal(i)} **{name}** — `{points} pts`")
+
             return "\n".join(lines)
 
         embed.add_field(
@@ -61,18 +167,10 @@ class Ranking(commands.Cog):
             inline=False
         )
 
-        embed.set_footer(text=f"Total de usuarios en ranking: {total_users}")
+        embed.set_footer(text=f"Usuarios en ranking: {total_users}")
+        return embed
 
-        await interaction.response.send_message(embed=embed)
-
-    # ================== SLASH COMMAND TOPCOINS ==================
-    @app_commands.command(name="topcoins", description="Ver ranking de coins del servidor")
-    async def topcoins(self, interaction: discord.Interaction):
-
-        embed = await self.build_topcoins_embed(interaction.guild)
-        await interaction.response.send_message(embed=embed)
-
-    # ================== EMBED FIJO DE TOP COINS ==================
+    # ================== EMBED COINS ==================
     async def build_topcoins_embed(self, guild: discord.Guild):
         top = await get_top_coins(guild.id)
 
@@ -109,19 +207,42 @@ class Ranking(commands.Cog):
         embed.set_footer(text="Sistema de economía • Coins")
         return embed
 
-    # ================== ACTUALIZAR MENSAJE FIJO ==================
-    async def update_ranking_message(self):
+    # ================== UPDATE TOP ==================
+    async def update_top_message(self):
         channel = self.bot.get_channel(RANKING_CHANNEL_ID)
         if not channel:
+            print("❌ Canal TOP no encontrado")
             return
 
         try:
-            message = await channel.fetch_message(RANKING_MESSAGE_ID)
+            message = await channel.fetch_message(TOP_MESSAGE_ID)
         except discord.NotFound:
+            print("❌ Mensaje TOP no encontrado")
+            return
+
+        embed = await self.build_top_embed(channel.guild)
+        await message.edit(embed=embed)
+
+    # ================== UPDATE COINS ==================
+    async def update_coins_message(self):
+        channel = self.bot.get_channel(RANKING_CHANNEL_ID)
+        if not channel:
+            print("❌ Canal COINS no encontrado")
+            return
+
+        try:
+            message = await channel.fetch_message(COINS_MESSAGE_ID)
+        except discord.NotFound:
+            print("❌ Mensaje COINS no encontrado")
             return
 
         embed = await self.build_topcoins_embed(channel.guild)
         await message.edit(embed=embed)
+
+    # ================== UPDATE GLOBAL ==================
+    async def update_all_rankings(self):
+        await self.update_top_message()
+        await self.update_coins_message()
 
 
 async def setup(bot):

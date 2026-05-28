@@ -1,4 +1,3 @@
-# cogs/economy.py
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -9,7 +8,6 @@ from services.economy_service import EconomyService
 class Economy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.ADMINS = [1383299653637898241, 836076392244445194]  # IDs permitidos
 
     # ================== /BALANCE ==================
     @app_commands.command(name="balance", description="Ver tu balance de coins")
@@ -35,8 +33,9 @@ class Economy(commands.Cog):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # ================== /GIVECOINS ==================
+    # ================== /GIVECOINS (ADMIN) ==================
     @app_commands.command(name="givecoins", description="Dar coins a un usuario")
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         member="Usuario que recibirá coins",
         amount="Cantidad de coins",
@@ -49,13 +48,6 @@ class Economy(commands.Cog):
         amount: int,
         reason: str = "Sin especificar"
     ):
-
-        if interaction.user.id not in self.ADMINS:
-            await interaction.response.send_message(
-                "❌ No tienes permisos para usar este comando.",
-                ephemeral=True
-            )
-            return
 
         if amount <= 0:
             await interaction.response.send_message(
@@ -100,8 +92,9 @@ class Economy(commands.Cog):
         if ranking_cog:
             await ranking_cog.update_ranking_message()
 
-    # ================== /REMOVECOINS ==================
+    # ================== /REMOVECOINS (ADMIN) ==================
     @app_commands.command(name="removecoins", description="Quitar coins a un usuario")
+    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         member="Usuario al que se le quitarán coins",
         amount="Cantidad a retirar",
@@ -114,13 +107,6 @@ class Economy(commands.Cog):
         amount: int,
         reason: str = "Sin especificar"
     ):
-
-        if interaction.user.id not in self.ADMINS:
-            await interaction.response.send_message(
-                "❌ No tienes permisos para usar este comando.",
-                ephemeral=True
-            )
-            return
 
         if amount <= 0:
             await interaction.response.send_message(
@@ -178,13 +164,21 @@ class Economy(commands.Cog):
         if ranking_cog:
             await ranking_cog.update_ranking_message()
 
+    # ================== ERROR HANDLER ==================
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.errors.MissingPermissions):
-            await interaction.response.send_message(
-                "❌ Solo administradores pueden usar este comando.",
-                ephemeral=True
-            )
 
+        if isinstance(error, app_commands.errors.MissingPermissions):
+
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "🚫 Solo administradores pueden usar este comando.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "🚫 Solo administradores pueden usar este comando.",
+                    ephemeral=True
+                )
 
 
 async def setup(bot):
